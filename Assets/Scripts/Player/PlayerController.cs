@@ -5,10 +5,6 @@ using VistaWorld.Platform;
 
 namespace VistaWorld.Player
 {
-    /// <summary>
-    /// Điều khiển nhân vật 3D Platformer dành cho Mobile Android (phong cách Vista World).
-    /// Hỗ trợ di chuyển đa hướng theo Camera, Virtual Joystick, Jump, Double Jump, Coyote Time, Jump Buffer, và Gravity mượt mà.
-    /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class PlayerController : MonoBehaviour
     {
@@ -21,98 +17,170 @@ namespace VistaWorld.Player
         [SerializeField] private float acceleration = 25.0f;
         [Tooltip("Gia tốc hãm khi nhả joystick")]
         [SerializeField] private float deceleration = 30.0f;
-        [Tooltip("Hệ số kiểm soát hướng trên không (0 = không lái được, 1 = lái như trên đất)")]
         [Range(0f, 1f)]
+        [Tooltip("Hệ số kiểm soát hướng trên không")]
         [SerializeField] private float airControl = 0.85f;
 
-        [Header("Jump & Double Jump Settings")]
-        [Tooltip("Độ cao cú nhảy cơ bản (mét)")]
+        [Header("Jump & Multi-Jump Settings")]
+        [Tooltip("Độ cao cú nhảy cơ bản")]
         [SerializeField] private float jumpHeight = 2.8f;
-        [Tooltip("Độ cao cú nhảy đúp (mét)")]
+        [Tooltip("Độ cao các cú nhảy trên không")]
         [SerializeField] private float doubleJumpHeight = 2.5f;
-        [Tooltip("Thời gian ân hạn sau khi rời mép bệ vẫn được phép nhảy (Coyote Time)")]
+        [Tooltip("Số lần nhảy tối đa trước khi chạm đất")]
+        [SerializeField] private int maxJumpCount = 3;
+        [Tooltip("Thời gian ân hạn sau khi rời mép bệ")]
         [SerializeField] private float coyoteTime = 0.15f;
-        [Tooltip("Thời gian nhớ lệnh bấm nhảy trước khi chạm đất (Jump Buffer)")]
+        [Tooltip("Thời gian nhớ lệnh bấm nhảy")]
         [SerializeField] private float jumpBufferTime = 0.15f;
 
         [Header("Gravity & Physics")]
         [Tooltip("Gia tốc trọng lực")]
         [SerializeField] private float gravity = -28.0f;
-        [Tooltip("Hệ số trọng lực tăng thêm khi rơi xuống để cú nhảy dứt khoát")]
+        [Tooltip("Hệ số trọng lực khi rơi")]
         [SerializeField] private float fallMultiplier = 1.7f;
-        [Tooltip("Tốc độ rơi tối đa (Terminal Velocity)")]
+        [Tooltip("Tốc độ rơi tối đa")]
         [SerializeField] private float terminalVelocity = -35.0f;
-        [Tooltip("Lực ép nhẹ xuống đất khi đang đứng để bám dốc/sàn ổn định")]
+        [Tooltip("Lực ép nhẹ xuống đất")]
         [SerializeField] private float groundedGravity = -2.0f;
 
         [Header("Ground Check")]
-        [Tooltip("Bán kính quả cầu dò mặt đất bổ sung dưới chân")]
+        [Tooltip("Bán kính dò mặt đất")]
         [SerializeField] private float groundCheckRadius = 0.28f;
-        [Tooltip("Độ lệch tâm điểm kiểm tra chạm đất so với gốc nhân vật")]
+        [Tooltip("Độ lệch điểm kiểm tra mặt đất")]
         [SerializeField] private Vector3 groundCheckOffset = new Vector3(0, 0.1f, 0);
-        [Tooltip("Lớp mặt đất hợp lệ")]
+        [Tooltip("Layer mặt đất")]
         [SerializeField] private LayerMask groundLayers = ~0;
 
         [Header("Camera Reference")]
-        [Tooltip("Transform của Camera chính (để tính toán di chuyển theo hướng nhìn)")]
+        [Tooltip("Transform của Camera chính")]
         [SerializeField] private Transform cameraTransform;
 
-        // Trạng thái nội bộ
+        [Header("Running Slide")]
+        [Tooltip("Tốc độ khi đang slide")]
+        [SerializeField] private float slideSpeed = 11.0f;
+        [Tooltip("Thời gian slide")]
+        [SerializeField] private float slideDuration = 0.65f;
+        [Tooltip("Thời gian chờ trước khi slide lại")]
+        [SerializeField] private float slideCooldown = 0.35f;
+        [Tooltip("Tốc độ giảm dần khi slide")]
+        [SerializeField] private float slideDeceleration = 18.0f;
+        [Tooltip("Chiều cao CharacterController khi slide")]
+        [SerializeField] private float slideControllerHeight = 1.0f;
+
         private CharacterController characterController;
         private Vector3 currentVelocity = Vector3.zero;
         private float verticalVelocity = 0f;
         private bool isGrounded = false;
-        private bool canDoubleJump = false;
+        private int jumpCount = 0;
         private float coyoteTimeCounter = 0f;
         private float jumpBufferCounter = 0f;
         private bool wasGroundedLastFrame = false;
 
-        // Các sự kiện dành cho Animation, Âm thanh & VFX
+        private bool isSliding = false;
+        private float slideTimer = 0f;
+        private float slideCooldownTimer = 0f;
+        private Vector3 slideDirection = Vector3.forward;
+        private float originalControllerHeight;
+        private Vector3 originalControllerCenter;
+
+        private MovingPlatform currentMovingPlatform;
+
         public event Action OnJump;
         public event Action OnDoubleJump;
-        public event Action<float> OnLanded; // truyền vào vận tốc tiếp đất
+        public event Action OnFlipJump;
+        public event Action<float> OnLanded;
+        public event Action OnSlide;
+        public event Action OnSlideEnd;
 
         public bool IsGrounded => isGrounded;
         public Vector3 CurrentHorizontalVelocity => new Vector3(currentVelocity.x, 0, currentVelocity.z);
         public float VerticalVelocity => verticalVelocity;
-        public bool CanDoubleJump => canDoubleJump;
+        public int JumpCount => jumpCount;
+        public bool IsSliding => isSliding;
+
+        public Transform CameraTransform
+        {
+            get => cameraTransform;
+            set => cameraTransform = value;
+        }
 
         private void Awake()
         {
             characterController = GetComponent<CharacterController>();
-            if (cameraTransform == null && UnityEngine.Camera.main != null)
-            {
-                cameraTransform = UnityEngine.Camera.main.transform;
-            }
+            originalControllerHeight = characterController.height;
+            originalControllerCenter = characterController.center;
+            EnsureCameraReference();
+        }
+
+        private void Start()
+        {
+            EnsureCameraReference();
         }
 
         private void Update()
         {
             CheckGroundStatus();
             HandleJumpInput();
+            HandleKeyboardActions();
+            UpdateSlide();
+            UpdateCooldowns();
             ApplyMovement();
             ApplyGravityAndJump();
             ExecuteMove();
         }
 
-        /// <summary>
-        /// Kiểm tra trạng thái chạm đất với độ tin cậy cao kết hợp CharacterController và Physics Check
-        /// </summary>
+        private void EnsureCameraReference()
+        {
+            if (cameraTransform != null)
+                return;
+
+            if (UnityEngine.Camera.main != null)
+            {
+                cameraTransform = UnityEngine.Camera.main.transform;
+                return;
+            }
+
+            var tpc = FindObjectOfType<VistaWorld.CameraControl.ThirdPersonCamera>();
+
+            if (tpc != null)
+                cameraTransform = tpc.transform;
+        }
+
+        private void HandleKeyboardActions()
+        {
+            if (Input.GetKeyDown(KeyCode.LeftControl))
+                StartSlide();
+            if (SlideButton.Instance != null &&
+                SlideButton.Instance.ConsumeSlidePress())
+            {
+                StartSlide();
+            }
+        }
+
         private void CheckGroundStatus()
         {
             Vector3 spherePosition = transform.position + groundCheckOffset;
             int maskWithoutSelf = groundLayers & ~(1 << gameObject.layer);
-            bool physicsGrounded = Physics.CheckSphere(spherePosition, groundCheckRadius, maskWithoutSelf, QueryTriggerInteraction.Ignore);
 
-            isGrounded = characterController.isGrounded || (physicsGrounded && verticalVelocity <= 0.1f);
+            bool physicsGrounded = Physics.CheckSphere(
+                spherePosition,
+                groundCheckRadius,
+                maskWithoutSelf,
+                QueryTriggerInteraction.Ignore
+            );
+
+            bool ccGrounded = characterController.isGrounded && verticalVelocity <= 0.1f;
+            bool sphereGrounded = physicsGrounded && verticalVelocity <= 0.1f;
+
+            isGrounded = ccGrounded || sphereGrounded;
 
             if (isGrounded)
             {
                 coyoteTimeCounter = coyoteTime;
-                canDoubleJump = true;
 
                 if (!wasGroundedLastFrame)
                 {
+                    jumpCount = 0;
                     OnLanded?.Invoke(Mathf.Abs(verticalVelocity));
                 }
             }
@@ -124,186 +192,344 @@ namespace VistaWorld.Player
             wasGroundedLastFrame = isGrounded;
         }
 
-        /// <summary>
-        /// Lắng nghe tín hiệu bấm nút nhảy từ UI JumpButton hoặc phím Space
-        /// </summary>
         private void HandleJumpInput()
         {
             bool jumpPressed = false;
+
             if (JumpButton.Instance != null)
-            {
                 jumpPressed = JumpButton.Instance.ConsumeJumpPress();
-            }
 
             if (!jumpPressed && Input.GetButtonDown("Jump"))
-            {
                 jumpPressed = true;
-            }
 
             if (jumpPressed)
-            {
                 jumpBufferCounter = jumpBufferTime;
-            }
             else
-            {
                 jumpBufferCounter -= Time.deltaTime;
-            }
         }
 
-        /// <summary>
-        /// Xử lý di chuyển theo hướng camera từ Virtual Joystick
-        /// </summary>
         private void ApplyMovement()
         {
-            // 1. Nhận input từ VirtualJoystick hoặc bàn phím
             Vector2 input = Vector2.zero;
+
             if (VirtualJoystick.Instance != null && VirtualJoystick.Instance.IsActive)
             {
                 input = VirtualJoystick.Instance.Direction;
             }
             else
             {
-                input = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
-                if (input.sqrMagnitude > 1f) input.Normalize();
+                input = new Vector2(
+                    Input.GetAxisRaw("Horizontal"),
+                    Input.GetAxisRaw("Vertical")
+                );
+
+                if (input.sqrMagnitude > 1f)
+                    input.Normalize();
             }
 
-            // 2. Chuyển đổi input theo hướng nhìn của Camera
+            if (isSliding)
+            {
+                currentVelocity = Vector3.MoveTowards(
+                    currentVelocity,
+                    slideDirection * slideSpeed,
+                    slideDeceleration * Time.deltaTime
+                );
+
+                return;
+            }
+
+            if (cameraTransform == null)
+                EnsureCameraReference();
+
             Vector3 moveDirection = Vector3.zero;
+
             if (cameraTransform != null)
             {
                 Vector3 forward = cameraTransform.forward;
                 Vector3 right = cameraTransform.right;
+
                 forward.y = 0f;
                 right.y = 0f;
+
                 forward.Normalize();
                 right.Normalize();
 
-                moveDirection = (forward * input.y + right * input.x);
+                moveDirection = forward * input.y + right * input.x;
             }
             else
             {
                 moveDirection = new Vector3(input.x, 0, input.y);
             }
 
-            // 3. Tính toán gia tốc / hãm tốc
             Vector3 targetVelocity = moveDirection * moveSpeed;
-            float currentAccel = isGrounded ? (input.sqrMagnitude > 0.01f ? acceleration : deceleration)
-                                            : (input.sqrMagnitude > 0.01f ? acceleration * airControl : deceleration * airControl);
 
-            currentVelocity.x = Mathf.MoveTowards(currentVelocity.x, targetVelocity.x, currentAccel * Time.deltaTime);
-            currentVelocity.z = Mathf.MoveTowards(currentVelocity.z, targetVelocity.z, currentAccel * Time.deltaTime);
+            float currentAccel;
 
-            // 4. Xoay hướng mặt nhân vật mượt mà theo hướng di chuyển
-            Vector3 horizontalMove = new Vector3(currentVelocity.x, 0, currentVelocity.z);
+            if (isGrounded)
+            {
+                currentAccel = input.sqrMagnitude > 0.01f
+                    ? acceleration
+                    : deceleration;
+            }
+            else
+            {
+                currentAccel = input.sqrMagnitude > 0.01f
+                    ? acceleration * airControl
+                    : deceleration * airControl;
+            }
+
+            currentVelocity.x = Mathf.MoveTowards(
+                currentVelocity.x,
+                targetVelocity.x,
+                currentAccel * Time.deltaTime
+            );
+
+            currentVelocity.z = Mathf.MoveTowards(
+                currentVelocity.z,
+                targetVelocity.z,
+                currentAccel * Time.deltaTime
+            );
+
+            Vector3 horizontalMove = new Vector3(
+                currentVelocity.x,
+                0,
+                currentVelocity.z
+            );
+
             if (horizontalMove.sqrMagnitude > 0.04f)
             {
-                Quaternion targetRotation = Quaternion.LookRotation(horizontalMove.normalized, Vector3.up);
-                transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                Quaternion targetRotation = Quaternion.LookRotation(
+                    horizontalMove.normalized,
+                    Vector3.up
+                );
+
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation,
+                    targetRotation,
+                    rotationSpeed * Time.deltaTime
+                );
             }
         }
 
-        /// <summary>
-        /// Tính toán nhảy đơn, nhảy đúp và trọng lực platformer dứt khoát
-        /// </summary>
         private void ApplyGravityAndJump()
         {
-            // 1. Kích hoạt Nhảy lần 1 (qua Jump Buffer hoặc Coyote Time)
-            if (jumpBufferCounter > 0f && coyoteTimeCounter > 0f)
+            if (!isSliding && jumpBufferCounter > 0f)
             {
-                if (currentMovingPlatform != null)
+                if (jumpCount == 0)
                 {
-                    currentMovingPlatform.UnregisterRider(characterController);
-                    currentMovingPlatform = null;
+                    if (currentMovingPlatform != null)
+                    {
+                        currentMovingPlatform.UnregisterRider(characterController);
+                        currentMovingPlatform = null;
+                    }
+
+                    verticalVelocity = Mathf.Sqrt(
+                        2f * jumpHeight * Mathf.Abs(gravity)
+                    );
+
+                    jumpCount = 1;
+                    jumpBufferCounter = 0f;
+                    coyoteTimeCounter = 0f;
+
+                    OnJump?.Invoke();
                 }
-                verticalVelocity = Mathf.Sqrt(2f * jumpHeight * Mathf.Abs(gravity));
-                jumpBufferCounter = 0f;
-                coyoteTimeCounter = 0f;
-                OnJump?.Invoke();
-            }
-            // 2. Kích hoạt Nhảy đúp (Double Jump) trên không
-            else if (jumpBufferCounter > 0f && !isGrounded && canDoubleJump)
-            {
-                if (currentMovingPlatform != null)
+                else if (!isGrounded && jumpCount < maxJumpCount)
                 {
-                    currentMovingPlatform.UnregisterRider(characterController);
-                    currentMovingPlatform = null;
+                    if (currentMovingPlatform != null)
+                    {
+                        currentMovingPlatform.UnregisterRider(characterController);
+                        currentMovingPlatform = null;
+                    }
+
+                    verticalVelocity = Mathf.Sqrt(
+                        2f * doubleJumpHeight * Mathf.Abs(gravity)
+                    );
+
+                    jumpCount++;
+                    jumpBufferCounter = 0f;
+
+                    OnDoubleJump?.Invoke();
+                    OnFlipJump?.Invoke();
                 }
-                verticalVelocity = Mathf.Sqrt(2f * doubleJumpHeight * Mathf.Abs(gravity));
-                canDoubleJump = false;
-                jumpBufferCounter = 0f;
-                OnDoubleJump?.Invoke();
             }
 
-            // 3. Tính toán trọng lực
             if (isGrounded && verticalVelocity < 0f)
             {
                 verticalVelocity = groundedGravity;
             }
             else
             {
-                // Kiểm tra xem người chơi có nhả nút nhảy sớm không để tạo cú nhảy thấp (Variable Jump Height)
-                bool isHoldingJump = (JumpButton.Instance != null && JumpButton.Instance.IsHeld) || Input.GetButton("Jump");
+                bool isHoldingJump =
+                    (JumpButton.Instance != null && JumpButton.Instance.IsHeld) ||
+                    Input.GetButton("Jump");
 
                 float effectiveGravity = gravity;
+
                 if (verticalVelocity < 0f)
                 {
-                    // Rơi nhanh hơn để tránh cảm giác trôi lơ lửng
                     effectiveGravity *= fallMultiplier;
                 }
                 else if (!isHoldingJump)
                 {
-                    // Nhả nút nhảy sớm thì cắt bớt lực đẩy lên
-                    effectiveGravity *= (fallMultiplier * 1.2f);
+                    effectiveGravity *= fallMultiplier * 1.2f;
                 }
 
                 verticalVelocity += effectiveGravity * Time.deltaTime;
-                verticalVelocity = Mathf.Max(verticalVelocity, terminalVelocity);
+
+                verticalVelocity = Mathf.Max(
+                    verticalVelocity,
+                    terminalVelocity
+                );
             }
         }
 
-        private MovingPlatform currentMovingPlatform;
+        public void StartSlide()
+        {
+            if (!isGrounded)
+                return;
+
+            if (isSliding)
+                return;
+
+            if (slideCooldownTimer > 0f)
+                return;
+
+            Vector3 horizontalVelocity = new Vector3(
+                currentVelocity.x,
+                0,
+                currentVelocity.z
+            );
+
+            if (horizontalVelocity.magnitude < 2.0f)
+                return;
+
+            slideDirection = horizontalVelocity.normalized;
+            isSliding = true;
+            slideTimer = slideDuration;
+            slideCooldownTimer = slideCooldown;
+
+            currentVelocity = slideDirection * slideSpeed;
+
+            SetSlideCollider(true);
+            OnSlide?.Invoke();
+        }
+
+        private void UpdateSlide()
+        {
+            if (!isSliding)
+                return;
+
+            slideTimer -= Time.deltaTime;
+
+            if (slideTimer <= 0f)
+                StopSlide();
+        }
+
+        public void StopSlide()
+        {
+            if (!isSliding)
+                return;
+
+            isSliding = false;
+
+            SetSlideCollider(false);
+            OnSlideEnd?.Invoke();
+        }
+
+        private void SetSlideCollider(bool sliding)
+        {
+            if (characterController == null)
+                return;
+
+            if (sliding)
+            {
+                float heightDifference =
+                    originalControllerHeight - slideControllerHeight;
+
+                characterController.height = slideControllerHeight;
+
+                characterController.center =
+                    originalControllerCenter -
+                    new Vector3(
+                        0,
+                        heightDifference * 0.5f,
+                        0
+                    );
+            }
+            else
+            {
+                characterController.height = originalControllerHeight;
+                characterController.center = originalControllerCenter;
+            }
+        }
+
+        private void UpdateCooldowns()
+        {
+            if (slideCooldownTimer > 0f)
+                slideCooldownTimer -= Time.deltaTime;
+        }
 
         private void OnControllerColliderHit(ControllerColliderHit hit)
         {
             if (hit.normal.y > 0.5f)
             {
-                MovingPlatform mp = hit.gameObject.GetComponent<MovingPlatform>();
+                MovingPlatform mp =
+                    hit.gameObject.GetComponent<MovingPlatform>();
+
                 if (mp == null && hit.transform.parent != null)
                 {
-                    mp = hit.transform.parent.GetComponent<MovingPlatform>();
+                    mp =
+                        hit.transform.parent.GetComponent<MovingPlatform>();
                 }
 
                 if (mp != null)
                 {
-                    if (currentMovingPlatform != null && currentMovingPlatform != mp)
+                    if (currentMovingPlatform != null &&
+                        currentMovingPlatform != mp)
                     {
-                        currentMovingPlatform.UnregisterRider(characterController);
+                        currentMovingPlatform.UnregisterRider(
+                            characterController
+                        );
                     }
+
                     currentMovingPlatform = mp;
-                    currentMovingPlatform.RegisterRider(characterController);
+
+                    currentMovingPlatform.RegisterRider(
+                        characterController
+                    );
                 }
                 else if (currentMovingPlatform != null)
                 {
-                    currentMovingPlatform.UnregisterRider(characterController);
+                    currentMovingPlatform.UnregisterRider(
+                        characterController
+                    );
+
                     currentMovingPlatform = null;
                 }
             }
         }
 
-        /// <summary>
-        /// Thực thi di chuyển thông qua CharacterController
-        /// </summary>
         private void ExecuteMove()
         {
-            Vector3 motion = new Vector3(currentVelocity.x, verticalVelocity, currentVelocity.z) * Time.deltaTime;
+            Vector3 motion = new Vector3(
+                currentVelocity.x,
+                verticalVelocity,
+                currentVelocity.z
+            ) * Time.deltaTime;
+
             characterController.Move(motion);
         }
 
         private void OnDrawGizmosSelected()
         {
-            // Vẽ quả cầu dò chạm đất trong Editor
-            Gizmos.color = isGrounded ? Color.green : Color.red;
-            Gizmos.DrawWireSphere(transform.position + groundCheckOffset, groundCheckRadius);
+            Gizmos.color = isGrounded
+                ? Color.green
+                : Color.red;
+
+            Gizmos.DrawWireSphere(
+                transform.position + groundCheckOffset,
+                groundCheckRadius
+            );
         }
     }
 }

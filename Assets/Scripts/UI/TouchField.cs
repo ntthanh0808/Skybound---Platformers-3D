@@ -22,6 +22,7 @@ namespace VistaWorld.UI
         private bool isPressed;
 
         public Vector2 TouchDist => touchDist;
+        public bool IsPressed => isPressed;
 
         private void Awake()
         {

@@ -109,7 +109,7 @@ namespace VistaWorld.Game
             PlayerController pc = player.AddComponent<PlayerController>();
             PlayerVisuals pv = player.AddComponent<PlayerVisuals>();
             pv.ModelRoot = model.transform;
-            pv.CreateFacialIndicator();
+            // pv.CreateFacialIndicator();
 
             // 5. Main Camera & ThirdPersonCamera
             Camera cam = Camera.main;
@@ -123,6 +123,8 @@ namespace VistaWorld.Game
             ThirdPersonCamera tpc = cam.GetComponent<ThirdPersonCamera>();
             if (tpc == null) tpc = cam.gameObject.AddComponent<ThirdPersonCamera>();
             tpc.Target = player.transform;
+            tpc.InitializeCamera();
+            pc.CameraTransform = cam.transform;
 
             // 6. UI Canvas
             SetupUI();

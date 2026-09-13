@@ -303,7 +303,7 @@ namespace VistaWorld.Editor
             player.AddComponent<PlayerController>();
             PlayerVisuals pv = player.AddComponent<PlayerVisuals>();
             pv.ModelRoot = model.transform;
-            pv.CreateFacialIndicator();
+            // pv.CreateFacialIndicator();
 
             return player;
         }
@@ -325,6 +325,10 @@ namespace VistaWorld.Editor
             ThirdPersonCamera tpc = cam.GetComponent<ThirdPersonCamera>();
             if (tpc == null) tpc = cam.gameObject.AddComponent<ThirdPersonCamera>();
             tpc.Target = player.transform;
+            tpc.InitializeCamera();
+
+            PlayerController pc = player.GetComponent<PlayerController>();
+            if (pc != null) pc.CameraTransform = cam.transform;
         }
 
         private static Text SetupMobileUI(Sprite joyBaseSprite, Sprite joyKnobSprite, Sprite jumpBtnSprite)
