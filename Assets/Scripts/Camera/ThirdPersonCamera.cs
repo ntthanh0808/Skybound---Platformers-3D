@@ -56,7 +56,7 @@ namespace VistaWorld.CameraControl
         [SerializeField] private float minPitch = 10f;
 
         [Tooltip("Góc ngẩng cao nhất (nhìn từ trên cao xuống)")]
-        [SerializeField] private float maxPitch = 65f;
+        [SerializeField] private float maxPitch = 150f;
 
         [Tooltip("Tự động xoay camera ra sau lưng khi nhân vật di chuyển. Tắt để giữ nguyên góc chéo tương đối")]
         [SerializeField] private bool autoAlignBehindPlayer = false;
